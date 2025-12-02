@@ -3,6 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    
+    <!-- Meta tagi dla trybu pełnoekranowego (PWA) -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#111827">
+
     <title>Smart Workout Timer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
@@ -25,7 +32,7 @@
             animation: pulse-red 2s infinite;
         }
         
-        /* Agresywna animacja dla przekroczenia czasu (Podgląd + Timer) */
+        /* Agresywna animacja dla przekroczenia czasu w podglądzie */
         @keyframes aggressive-pulse {
             0% { 
                 box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7); 
@@ -33,9 +40,9 @@
                 background-color: rgba(31, 41, 55, 1);
             }
             50% { 
-                box-shadow: 0 0 30px 15px rgba(220, 38, 38, 0.5); 
+                box-shadow: 0 0 20px 10px rgba(220, 38, 38, 0.5); 
                 border-color: rgba(239, 68, 68, 1);
-                background-color: rgba(69, 10, 10, 1); /* red-950 */
+                background-color: rgba(127, 29, 29, 0.4);
             }
             100% { 
                 box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); 
@@ -45,7 +52,6 @@
         }
         .aggressive-overtime {
             animation: aggressive-pulse 0.8s infinite;
-            border-width: 4px !important; /* Grubsza ramka */
         }
 
         /* Animacja 3 szybkich błysków ekranu */
@@ -136,8 +142,8 @@
                 <span id="quick-rounds" class="text-2xl font-bold text-white ml-2">0</span>
             </div>
 
-            <!-- Główny Czas Szybki + Kontener na Czerwoną Obwódkę -->
-            <div id="quick-timer-container" class="relative w-56 h-56 flex items-center justify-center rounded-full border-4 border-transparent transition-all duration-300">
+            <!-- Główny Czas Szybki -->
+            <div class="relative w-56 h-56 flex items-center justify-center">
                 <svg class="w-full h-full" viewBox="0 0 120 120">
                     <circle class="text-gray-700 stroke-current" stroke-width="6" cx="60" cy="60" r="54" fill="transparent"></circle>
                     <circle id="quick-progress-ring" class="text-yellow-500 progress-ring__circle stroke-current" stroke-width="6" stroke-linecap="round" cx="60" cy="60" r="54" fill="transparent" stroke-dasharray="339.292" stroke-dashoffset="0"></circle>
@@ -257,8 +263,29 @@
     </div>
 
     <script>
-        // --- WAKE LOCK API ---
+        // --- FULLSCREEN & WAKE LOCK API ---
         let wakeLock = null;
+
+        function enterFullscreen() {
+            const elem = document.documentElement;
+            if (elem.requestFullscreen) {
+                elem.requestFullscreen().catch(err => console.log(err));
+            } else if (elem.webkitRequestFullscreen) { /* Safari */
+                elem.webkitRequestFullscreen();
+            } else if (elem.msRequestFullscreen) { /* IE11 */
+                elem.msRequestFullscreen();
+            }
+        }
+
+        function exitFullscreen() {
+            if (document.exitFullscreen) {
+                document.exitFullscreen().catch(err => console.log(err));
+            } else if (document.webkitExitFullscreen) { /* Safari */
+                document.webkitExitFullscreen();
+            } else if (document.msExitFullscreen) { /* IE11 */
+                document.msExitFullscreen();
+            }
+        }
 
         async function requestWakeLock() {
             try {
@@ -512,6 +539,7 @@
             screens.setup.classList.add('hidden');
             screens.workout.classList.remove('hidden');
             requestWakeLock();
+            enterFullscreen(); // TRYB PEŁNOEKRANOWY
             loadExercise(0);
             startTimer();
             updateTotalTimes();
@@ -521,6 +549,7 @@
             clearInterval(timerInterval);
             isRunning = false;
             releaseWakeLock();
+            exitFullscreen(); // WYJŚCIE Z PEŁNEGO EKRANU
             screens.workout.classList.add('hidden');
             screens.setup.classList.remove('hidden');
             workoutQueue = JSON.parse(JSON.stringify(initialWorkoutData));
@@ -600,8 +629,7 @@
             if (workoutQueue.length === 0 || currentIndex >= workoutQueue.length) {
                  elQuickMiniName.innerText = "Brak aktywnego treningu";
                  elQuickMiniTime.innerText = "--:--";
-                 elQuickMiniStatus.classList.remove('aggressive-overtime');
-                 elQuickTimerContainer.classList.remove('aggressive-overtime');
+                 // Usunięto obsługę aggressive-overtime
                  return;
             }
             
@@ -613,13 +641,11 @@
             if (timeLeft < 0) {
                 elQuickMiniTime.classList.remove('text-gray-500');
                 elQuickMiniTime.classList.add('text-red-500');
-                elQuickMiniStatus.classList.add('aggressive-overtime');
-                elQuickTimerContainer.classList.add('aggressive-overtime'); // DODANA PULSACJA TIMERA
+                // Usunięto dodawanie klasy aggressive-overtime
             } else {
                 elQuickMiniTime.classList.add('text-gray-500');
                 elQuickMiniTime.classList.remove('text-red-500');
-                elQuickMiniStatus.classList.remove('aggressive-overtime');
-                elQuickTimerContainer.classList.remove('aggressive-overtime');
+                // Usunięto usuwanie klasy aggressive-overtime
             }
         }
 
@@ -834,6 +860,7 @@
         function finishWorkout() {
             clearInterval(timerInterval);
             releaseWakeLock();
+            exitFullscreen(); // WYJŚCIE Z PEŁNEGO EKRANU NA KONIEC
             screens.workout.classList.add('hidden');
             screens.summary.classList.remove('hidden');
             elFinalTime.innerText = formatTime(totalTimeElapsed);
@@ -856,6 +883,7 @@
             screens.quick.classList.remove('hidden');
             
             requestWakeLock();
+            enterFullscreen(); // TRYB PEŁNOEKRANOWY
             quickRounds = 0;
             setQuickTime(30); 
             document.getElementById('quick-rounds').innerText = '0';
@@ -868,6 +896,7 @@
             screens.quick.classList.add('hidden');
             if (previousScreen === 'setup') {
                 releaseWakeLock();
+                exitFullscreen(); // WYJŚCIE Z PEŁNEGO EKRANU
                 screens.setup.classList.remove('hidden');
             } else if (previousScreen === 'workout') {
                 screens.workout.classList.remove('hidden');
