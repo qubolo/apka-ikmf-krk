@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Smart Workout Timer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='45' fill='%232563EB' stroke='white' stroke-width='4'/%3E%3Cpath d='M50 20V50L70 70' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%232563EB'/%3E%3Ccircle cx='50' cy='50' r='35' stroke='white' stroke-width='6' fill='none'/%3E%3Cpath d='M50 25V50L65 65' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
+
+    <style>
+        .progress-ring__circle {
+            transition: stroke-dashoffset 0.35s;
+            transform: rotate(-90deg);
+            transform-origin: 50% 50%;
+        }
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .overtime-pulse {
+            animation: pulse-red 2s infinite;
+        }
+        
+        /* Agresywna animacja dla przekroczenia czasu (Podgląd + Timer) */
+        @keyframes aggressive-pulse {
+            0% { 
+                box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7); 
+                border-color: rgba(239, 68, 68, 1);
+                background-color: rgba(31, 41, 55, 1);
+            }
+            50% { 
+                box-shadow: 0 0 30px 15px rgba(220, 38, 38, 0.5); 
+                border-color: rgba(239, 68, 68, 1);
+                background-color: rgba(69, 10, 10, 1); /* red-950 */
+            }
+            100% { 
+                box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); 
+                border-color: rgba(239, 68, 68, 1);
+                background-color: rgba(31, 41, 55, 1);
+            }
+        }
+        .aggressive-overtime {
+            animation: aggressive-pulse 0.8s infinite;
+            border-width: 4px !important; /* Grubsza ramka */
+        }
+
+        /* Animacja 3 szybkich błysków ekranu */
+        @keyframes flash-screen {
+            0%, 33%, 66% { background-color: rgba(220, 38, 38, 0.9); } /* Czerwony */
+            16%, 50%, 83%, 100% { background-color: #111827; } /* Powrót do tła */
+        }
+        .visual-alarm-active {
+            animation: flash-screen 0.6s linear;
+        }
+
+        body { touch-action: manipulation; }
+        
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #1f2937; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+
+        #slider-container { touch-action: none; user-select: none; }
+        #slider-handle { transition: transform 0.1s; cursor: grab; }
+        #slider-handle:active { cursor: grabbing; }
+        .slider-text-anim { animation: shine 2s infinite; }
+        @keyframes shine {
+            0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white h-screen flex flex-col overflow-hidden font-sans">
+
+    <!-- Ekran Startowy -->
+    <div id="setup-screen" class="flex-1 flex flex-col items-center justify-center p-6 space-y-6">
+        <div class="text-center">
+            <h1 class="text-4xl font-bold text-blue-500 mb-2">Smart Timer</h1>
+            <p class="text-gray-400">Wybierz tryb</p>
+        </div>
+        
+        <div class="bg-gray-800 p-6 rounded-2xl w-full max-w-sm shadow-lg border border-gray-700 flex flex-col h-[40%]">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold text-gray-300">Plan (Google Sheets)</h3>
+                <span id="loading-indicator" class="text-xs text-yellow-500 animate-pulse">
+                    <i class="fas fa-sync fa-spin"></i> Pobieranie...
+                </span>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                <ul class="space-y-3 text-sm text-gray-400" id="preview-list"></ul>
+            </div>
+            
+            <div id="error-message" class="hidden text-xs text-red-400 mt-2 border-t border-red-900 pt-2">
+                Błąd pobierania.
+            </div>
+        </div>
+
+        <button id="start-btn" onclick="startWorkout()" disabled class="w-full max-w-sm bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl text-xl shadow-lg transform transition active:scale-95 disabled:bg-gray-600 disabled:cursor-not-allowed">
+            ROZPOCZNIJ PLAN
+        </button>
+        
+        <button onclick="openQuickTimer('setup')" class="w-full max-w-sm bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 rounded-xl text-lg shadow-lg transform transition active:scale-95 border border-gray-600">
+            <i class="fas fa-stopwatch text-yellow-500 mr-2"></i> SZYBKI TIMER (RUNDY)
+        </button>
+
+        <!-- NOWY PRZYCISK: Otwieranie Google Sheets -->
+        <a href="https://docs.google.com/spreadsheets/d/1AX6ym_aXBjthM-nLr97Uufj5FYWQLW2DaC9G3Mcs82Q/edit" target="_blank" class="w-full max-w-sm bg-green-800 hover:bg-green-700 text-white font-bold py-3 rounded-xl text-lg shadow-lg transform transition active:scale-95 border border-green-600 flex items-center justify-center no-underline">
+            <i class="fas fa-table mr-2 text-green-300"></i> OTWÓRZ ARKUSZ
+        </a>
+    </div>
+
+    <!-- Ekran Szybkiego Timera -->
+    <div id="quick-timer-screen" class="hidden h-full flex flex-col bg-gray-900 absolute inset-0 z-50">
+        <!-- Pasek górny -->
+        <div class="flex justify-between items-center p-4 z-10 border-b border-gray-700 bg-gray-800">
+            <button onclick="toggleMute()" id="mute-btn" class="text-gray-400 hover:text-white p-2 rounded-lg bg-gray-700 w-10 h-10 flex items-center justify-center transition-colors">
+                <i class="fas fa-bell"></i>
+            </button>
+
+            <h2 class="text-lg font-bold text-yellow-500"><i class="fas fa-stopwatch"></i> Szybki Timer</h2>
+            
+            <button onclick="closeQuickTimer()" class="text-gray-400 hover:text-white px-2 py-1 bg-gray-700 rounded-lg">
+                <i class="fas fa-arrow-left mr-2"></i> Powrót
+            </button>
+        </div>
+
+        <div class="flex-1 flex flex-col items-center justify-center p-6 space-y-6 relative">
+            
+            <!-- Licznik Rund -->
+            <div class="bg-gray-800 px-6 py-2 rounded-full border border-gray-700">
+                <span class="text-gray-400 text-sm uppercase tracking-wider">Rundy</span>
+                <span id="quick-rounds" class="text-2xl font-bold text-white ml-2">0</span>
+            </div>
+
+            <!-- Główny Czas Szybki + Kontener na Czerwoną Obwódkę -->
+            <div id="quick-timer-container" class="relative w-56 h-56 flex items-center justify-center rounded-full border-4 border-transparent transition-all duration-300">
+                <svg class="w-full h-full" viewBox="0 0 120 120">
+                    <circle class="text-gray-700 stroke-current" stroke-width="6" cx="60" cy="60" r="54" fill="transparent"></circle>
+                    <circle id="quick-progress-ring" class="text-yellow-500 progress-ring__circle stroke-current" stroke-width="6" stroke-linecap="round" cx="60" cy="60" r="54" fill="transparent" stroke-dasharray="339.292" stroke-dashoffset="0"></circle>
+                </svg>
+                <div class="absolute inset-0 flex flex-col items-center justify-center">
+                    <span id="quick-timer-display" class="text-6xl font-mono font-bold tracking-tighter text-white">00:30</span>
+                </div>
+            </div>
+
+            <!-- Sterowanie -->
+            <div class="w-full max-w-sm grid grid-cols-2 gap-4">
+                <button onclick="setQuickTime(30)" class="bg-gray-700 hover:bg-gray-600 p-3 rounded-xl text-lg font-bold border border-gray-600 active:scale-95 transition">
+                    30 sek
+                </button>
+                <button onclick="setQuickTime(60)" class="bg-gray-700 hover:bg-gray-600 p-3 rounded-xl text-lg font-bold border border-gray-600 active:scale-95 transition">
+                    1 min
+                </button>
+            </div>
+
+            <div class="w-full max-w-sm">
+                <button onclick="toggleQuickTimer()" id="quick-start-btn" class="w-full bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-4 rounded-xl text-2xl shadow-lg active:scale-95 transition">
+                    <i class="fas fa-play mr-2"></i> START
+                </button>
+            </div>
+
+            <!-- PODGLĄD GŁÓWNEGO TRENINGU -->
+            <div id="quick-mini-status" class="w-full max-w-sm bg-gray-800 rounded-xl p-3 flex items-center justify-between border border-gray-700 transition-all duration-300 mt-auto">
+                <div class="flex flex-col overflow-hidden">
+                    <span class="text-[10px] text-gray-400 uppercase tracking-wider"><i class="fas fa-dumbbell mr-1"></i> Główny Plan</span>
+                    <span id="quick-mini-name" class="text-sm font-bold text-gray-200 truncate pr-2">Nieaktywny</span>
+                </div>
+                <div id="quick-mini-time" class="font-mono text-xl font-bold text-gray-500 pl-2 border-l border-gray-600">--:--</div>
+            </div>
+            
+        </div>
+    </div>
+
+    <!-- Ekran Treningu (Główny) -->
+    <div id="workout-screen" class="hidden h-full flex flex-col relative">
+        <div class="grid grid-cols-3 items-center p-3 bg-gray-800 bg-opacity-90 backdrop-blur-sm z-10 border-b border-gray-700 shadow-md shrink-0">
+            <div>
+                <div class="text-[10px] text-gray-400 font-mono uppercase tracking-wider">Elapsed</div>
+                <div id="total-time" class="font-mono text-xl font-bold text-gray-200">00:00</div>
+            </div>
+            <div class="text-center flex flex-col items-center">
+                <div class="text-[10px] text-gray-400 font-mono uppercase tracking-wider">Status</div>
+                <div id="status-time" class="font-mono text-xl font-bold text-gray-500">00:00</div>
+            </div>
+            <div class="text-right">
+                <div class="text-[10px] text-gray-400 font-mono uppercase tracking-wider">Remaining</div>
+                <div id="remaining-time" class="font-mono text-xl font-bold text-blue-400">00:00</div>
+            </div>
+        </div>
+
+        <div class="flex-1 flex flex-col items-center justify-center p-2 relative min-h-0 overflow-y-auto">
+            <h2 id="current-name" class="text-2xl md:text-3xl font-bold text-center mb-1 leading-tight w-full px-4 break-words">Przygotuj się</h2>
+            <p id="current-comment" class="text-xs text-gray-400 mb-4 italic w-full text-center px-4 whitespace-normal break-words leading-relaxed"></p>
+
+            <div class="relative w-48 h-48 md:w-56 md:h-56 flex items-center justify-center mb-6 shrink-0">
+                <svg class="w-full h-full" viewBox="0 0 120 120">
+                    <circle class="text-gray-700 stroke-current" stroke-width="8" cx="60" cy="60" r="54" fill="transparent"></circle>
+                    <circle id="progress-ring" class="text-blue-500 progress-ring__circle stroke-current" stroke-width="8" stroke-linecap="round" cx="60" cy="60" r="54" fill="transparent" stroke-dasharray="339.292" stroke-dashoffset="0"></circle>
+                </svg>
+                <div class="absolute inset-0 flex flex-col items-center justify-center">
+                    <span id="timer-display" class="text-5xl md:text-6xl font-mono font-bold tracking-tighter">00:00</span>
+                    <span id="overtime-label" class="text-red-500 text-[10px] font-bold uppercase tracking-widest hidden mt-1">Przekroczenie</span>
+                </div>
+            </div>
+
+            <!-- Kontrolery (Pause + Slide to Next) -->
+            <div class="w-full max-w-sm flex gap-3 shrink-0 items-center px-2">
+                <!-- Przycisk Pause -->
+                <button onclick="togglePause()" class="w-16 h-16 bg-gray-700 hover:bg-gray-600 rounded-xl flex items-center justify-center text-xl shrink-0 border border-gray-600">
+                    <i id="pause-icon" class="fas fa-pause"></i>
+                </button>
+                
+                <!-- Slide to Activate Next -->
+                <div id="slider-container" class="flex-1 h-16 bg-green-900/50 rounded-xl relative overflow-hidden border border-green-800">
+                    <div class="absolute inset-0 flex items-center justify-center">
+                        <span class="text-green-100 font-bold tracking-widest text-sm slider-text-anim pointer-events-none">NEXT >></span>
+                    </div>
+                    <div id="slider-handle" class="absolute left-0 top-0 bottom-0 w-16 bg-green-600 rounded-xl flex items-center justify-center shadow-lg border border-green-500 z-10">
+                        <i class="fas fa-chevron-right text-white text-xl pointer-events-none"></i>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pływający Przycisk QUICK TIMER -->
+            <button onclick="openQuickTimer('workout')" class="absolute bottom-4 right-4 bg-yellow-600 text-white p-4 rounded-full shadow-2xl border-2 border-yellow-400 z-50 hover:bg-yellow-500 active:scale-95 transition">
+                <i class="fas fa-stopwatch text-2xl"></i>
+            </button>
+
+            <div id="penalty-toast" class="absolute top-16 opacity-0 transition-opacity duration-500 bg-red-600 text-white px-4 py-2 rounded-full text-sm font-bold shadow-xl z-50 text-center max-w-[90%]"></div>
+        </div>
+
+        <div class="bg-gray-800 border-t border-gray-700 h-[40%] min-h-[200px] p-4 flex flex-col shrink-0">
+            <h3 class="text-xs text-gray-500 uppercase font-bold mb-3 tracking-wider flex justify-between items-center">
+                <span>Kolejka (Następne)</span>
+                <i class="fas fa-list text-gray-600"></i>
+            </h3>
+            <div id="queue-container" class="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar"></div>
+        </div>
+    </div>
+
+    <!-- Ekran Końcowy -->
+    <div id="summary-screen" class="hidden flex-1 flex flex-col items-center justify-center p-6 text-center">
+        <i class="fas fa-flag-checkered text-6xl text-green-500 mb-6"></i>
+        <h1 class="text-4xl font-bold mb-4">Trening Zakończony!</h1>
+        <p class="text-gray-400 mb-8">Dobra robota.</p>
+        <div class="space-y-4">
+             <div class="text-gray-500 text-sm">Całkowity czas</div>
+             <div id="final-time" class="text-3xl font-mono font-bold text-white">00:00</div>
+             <div class="text-gray-500 text-sm mt-2">Status końcowy</div>
+             <div id="final-status" class="text-xl font-mono">00:00</div>
+        </div>
+        <button onclick="location.reload()" class="mt-8 bg-gray-700 text-white px-8 py-3 rounded-lg hover:bg-gray-600">Nowy Trening</button>
+    </div>
+
+    <script>
+        // --- WAKE LOCK API ---
+        let wakeLock = null;
+
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    wakeLock.addEventListener('release', () => {
+                        console.log('Wake Lock zwolniony');
+                    });
+                }
+            } catch (err) {
+                console.error(`Błąd Wake Lock: ${err.name}, ${err.message}`);
+            }
+        }
+
+        async function releaseWakeLock() {
+            if (wakeLock !== null) {
+                await wakeLock.release();
+                wakeLock = null;
+            }
+        }
+
+        document.addEventListener('visibilitychange', async () => {
+            if (wakeLock !== null && document.visibilityState === 'visible') {
+                await requestWakeLock();
+            }
+        });
+
+        // --- KONFIGURACJA DANYCH ---
+        const SHEET_ID = '1AX6ym_aXBjthM-nLr97Uufj5FYWQLW2DaC9G3Mcs82Q';
+        const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv`;
+        const CACHE_KEY = 'smartWorkoutPlan_v1';
+
+        const fallbackData = [
+            { name: "Pajacyki (Demo)", duration: 30, comment: "" },
+            { name: "Pompki", duration: 45, comment: "Powoli w dół" },
+            { name: "Przysiady", duration: 60, comment: "" }
+        ];
+
+        let workoutQueue = [];
+        let initialWorkoutData = [];
+        let originalTotalSeconds = 0; 
+        
+        let currentIndex = 0;
+        let timeLeft = 0;
+        let totalTimeElapsed = 0;
+        let isRunning = false;
+        let timerInterval = null;
+        let initialDuration = 0;
+        let startTimeOfCurrentExercise = 0;
+        let accumulatedStatus = 0;
+
+        // Zmienne Szybkiego Timera
+        let quickInterval = null;
+        let quickTimeLeft = 30;
+        let quickPreset = 30;
+        let quickRounds = 0;
+        let quickIsRunning = false;
+        let previousScreen = 'setup';
+        let isMuted = false;
+
+        let isDragging = false;
+        let startX = 0;
+        let currentX = 0;
+        
+        // Zmienna dla widoku komentarza
+        let activeCommentIndex = null;
+
+        const screens = {
+            setup: document.getElementById('setup-screen'),
+            workout: document.getElementById('workout-screen'),
+            quick: document.getElementById('quick-timer-screen'),
+            summary: document.getElementById('summary-screen')
+        };
+        const elTimer = document.getElementById('timer-display');
+        const elName = document.getElementById('current-name');
+        const elComment = document.getElementById('current-comment');
+        const elProgressRing = document.getElementById('progress-ring');
+        const elOvertimeLabel = document.getElementById('overtime-label');
+        const elQueue = document.getElementById('queue-container');
+        const elPenaltyToast = document.getElementById('penalty-toast');
+        const elTotalTime = document.getElementById('total-time');
+        const elRemainingTime = document.getElementById('remaining-time');
+        const elStatusTime = document.getElementById('status-time');
+        const elFinalTime = document.getElementById('final-time');
+        const elFinalStatus = document.getElementById('final-status');
+        const elStartBtn = document.getElementById('start-btn');
+        const elLoading = document.getElementById('loading-indicator');
+        const elError = document.getElementById('error-message');
+
+        const elQuickMiniName = document.getElementById('quick-mini-name');
+        const elQuickMiniTime = document.getElementById('quick-mini-time');
+        const elQuickMiniStatus = document.getElementById('quick-mini-status');
+        const elQuickTimerContainer = document.getElementById('quick-timer-container');
+
+        const radius = 54;
+        const circumference = radius * 2 * Math.PI;
+        elProgressRing.style.strokeDasharray = `${circumference} ${circumference}`;
+
+        function initSlider() {
+            const slider = document.getElementById('slider-handle');
+            const container = document.getElementById('slider-container');
+            if(!slider || !container) return;
+
+            const startDrag = (e) => {
+                isDragging = true;
+                startX = (e.touches ? e.touches[0].clientX : e.clientX);
+                slider.style.transition = 'none';
+            };
+
+            const onDrag = (e) => {
+                if (!isDragging) return;
+                const clientX = (e.touches ? e.touches[0].clientX : e.clientX);
+                const deltaX = clientX - startX;
+                const containerWidth = container.offsetWidth;
+                const handleWidth = slider.offsetWidth;
+                const maxDrag = containerWidth - handleWidth;
+                let newX = Math.max(0, Math.min(deltaX, maxDrag));
+                currentX = newX;
+                slider.style.transform = `translateX(${newX}px)`;
+            };
+
+            const endDrag = () => {
+                if (!isDragging) return;
+                isDragging = false;
+                slider.style.transition = 'transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1)';
+                const containerWidth = container.offsetWidth;
+                const handleWidth = slider.offsetWidth;
+                const maxDrag = containerWidth - handleWidth;
+                const threshold = maxDrag * 0.75;
+
+                if (currentX > threshold) {
+                    slider.style.transform = `translateX(${maxDrag}px)`;
+                    setTimeout(() => {
+                        nextExercise();
+                        slider.style.transform = `translateX(0px)`;
+                        currentX = 0;
+                    }, 200);
+                } else {
+                    slider.style.transform = `translateX(0px)`;
+                    currentX = 0;
+                }
+            };
+
+            slider.addEventListener('mousedown', startDrag);
+            window.addEventListener('mousemove', onDrag);
+            window.addEventListener('mouseup', endDrag);
+            slider.addEventListener('touchstart', startDrag, {passive: false});
+            window.addEventListener('touchmove', onDrag, {passive: false});
+            window.addEventListener('touchend', endDrag);
+        }
+
+        async function fetchWorkoutPlan() {
+            try {
+                const response = await fetch(CSV_URL);
+                if (!response.ok) throw new Error('Network response was not ok');
+                const text = await response.text();
+                parseCSV(text);
+                localStorage.setItem(CACHE_KEY, JSON.stringify(initialWorkoutData));
+                enableStartButton();
+                elLoading.innerHTML = '<i class="fas fa-wifi text-green-500"></i> Online (Zapisano)';
+                elLoading.classList.remove('animate-pulse', 'text-yellow-500');
+            } catch (error) {
+                console.error("Błąd pobierania:", error);
+                loadFromCache();
+            }
+        }
+
+        function loadFromCache() {
+            const cached = localStorage.getItem(CACHE_KEY);
+            if (cached) {
+                try {
+                    initialWorkoutData = JSON.parse(cached);
+                    finalizeDataLoad();
+                    enableStartButton();
+                    elLoading.innerHTML = '<i class="fas fa-save text-orange-400"></i> Offline (Dane z pamięci)';
+                    elLoading.classList.remove('animate-pulse', 'text-yellow-500');
+                    elError.classList.add('hidden');
+                } catch (e) {
+                    console.error("Błąd odczytu cache", e);
+                    useFallbackData();
+                }
+            } else {
+                useFallbackData();
+            }
+        }
+
+        function parseCSV(csvText) {
+            const rows = csvText.split('\n');
+            const parsedData = [];
+            for (let i = 1; i < rows.length; i++) {
+                const cols = rows[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+                if (cols.length < 3) continue;
+                const name = cols[1];
+                const durationMin = parseFloat(cols[2]);
+                const comment = cols[3] || "";
+                if (name && !isNaN(durationMin)) {
+                    parsedData.push({
+                        name: name,
+                        duration: Math.round(durationMin * 60),
+                        comment: comment
+                    });
+                }
+            }
+            if (parsedData.length === 0) throw new Error("Pusty plik");
+            initialWorkoutData = parsedData;
+            finalizeDataLoad();
+        }
+
+        function useFallbackData() {
+            initialWorkoutData = fallbackData;
+            finalizeDataLoad();
+            enableStartButton();
+            elLoading.classList.add('hidden');
+            elError.innerText = "Brak sieci i zapisu. Tryb Demo.";
+            elError.classList.remove('hidden');
+        }
+
+        function finalizeDataLoad() {
+            workoutQueue = JSON.parse(JSON.stringify(initialWorkoutData));
+            originalTotalSeconds = workoutQueue.reduce((acc, curr) => acc + curr.duration, 0);
+            initPreview();
+        }
+
+        function enableStartButton() {
+            elStartBtn.disabled = false;
+            elStartBtn.classList.remove('bg-gray-600', 'cursor-not-allowed');
+            elStartBtn.classList.add('bg-blue-600', 'hover:bg-blue-500');
+        }
+
+        function initPreview() {
+            const list = document.getElementById('preview-list');
+            list.innerHTML = '';
+            workoutQueue.forEach(ex => {
+                list.innerHTML += `
+                    <li class="flex justify-between border-b border-gray-700 pb-1 items-center">
+                        <div class="flex flex-col">
+                            <span class="font-medium text-gray-200">${ex.name}</span>
+                            ${ex.comment ? `<span class="text-[10px] text-gray-400 italic">${ex.comment}</span>` : ''}
+                        </div>
+                        <span class="font-mono">${formatTime(ex.duration)}</span>
+                    </li>`;
+            });
+        }
+
+        window.onload = function() {
+            fetchWorkoutPlan();
+            initSlider(); 
+        };
+
+        function startWorkout() {
+            screens.setup.classList.add('hidden');
+            screens.workout.classList.remove('hidden');
+            requestWakeLock();
+            loadExercise(0);
+            startTimer();
+            updateTotalTimes();
+        }
+
+        function stopWorkout() {
+            clearInterval(timerInterval);
+            isRunning = false;
+            releaseWakeLock();
+            screens.workout.classList.add('hidden');
+            screens.setup.classList.remove('hidden');
+            workoutQueue = JSON.parse(JSON.stringify(initialWorkoutData));
+            currentIndex = 0;
+            totalTimeElapsed = 0;
+            accumulatedStatus = 0;
+            initPreview();
+        }
+
+        function loadExercise(index) {
+            if (index >= workoutQueue.length) {
+                finishWorkout();
+                return;
+            }
+            startTimeOfCurrentExercise = totalTimeElapsed;
+            currentIndex = index;
+            const currentEx = workoutQueue[index];
+            initialDuration = currentEx.duration;
+            timeLeft = currentEx.duration;
+            elName.innerText = currentEx.name;
+            elComment.innerText = currentEx.comment; 
+            
+            elOvertimeLabel.classList.add('hidden');
+            elTimer.classList.remove('text-red-500');
+            elProgressRing.classList.remove('text-red-500');
+            elProgressRing.classList.add('text-blue-500');
+            document.querySelector('.relative').classList.remove('overtime-pulse');
+
+            updateUI();
+            renderQueue();
+            updateTotalTimes();
+        }
+
+        function startTimer() {
+            if (isRunning) return;
+            isRunning = true;
+            document.getElementById('pause-icon').className = 'fas fa-pause';
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                totalTimeElapsed++;
+                updateUI();
+                updateTotalTimes();
+            }, 1000);
+        }
+
+        function togglePause() {
+            if (isRunning) {
+                clearInterval(timerInterval);
+                isRunning = false;
+                document.getElementById('pause-icon').className = 'fas fa-play';
+            } else {
+                startTimer();
+            }
+        }
+
+        function updateUI() {
+            const absTime = Math.abs(timeLeft);
+            elTimer.innerText = (timeLeft < 0 ? "-" : "") + formatTime(absTime);
+            if (timeLeft < 0) {
+                elTimer.classList.add('text-red-500');
+                elOvertimeLabel.classList.remove('hidden');
+                elProgressRing.classList.remove('text-blue-500');
+                elProgressRing.classList.add('text-red-500');
+                document.querySelector('.relative').classList.add('overtime-pulse');
+                elProgressRing.style.strokeDashoffset = 0;
+            } else {
+                const offset = circumference - (timeLeft / initialDuration) * circumference;
+                elProgressRing.style.strokeDashoffset = offset;
+            }
+            
+            if (!screens.quick.classList.contains('hidden')) {
+                updateQuickMiniPreview();
+            }
+        }
+        
+        function updateQuickMiniPreview() {
+            if (workoutQueue.length === 0 || currentIndex >= workoutQueue.length) {
+                 elQuickMiniName.innerText = "Brak aktywnego treningu";
+                 elQuickMiniTime.innerText = "--:--";
+                 elQuickMiniStatus.classList.remove('aggressive-overtime');
+                 elQuickTimerContainer.classList.remove('aggressive-overtime');
+                 return;
+            }
+            
+            const currentEx = workoutQueue[currentIndex];
+            elQuickMiniName.innerText = currentEx.name;
+            const absTime = Math.abs(timeLeft);
+            elQuickMiniTime.innerText = (timeLeft < 0 ? "-" : "") + formatTime(absTime);
+            
+            if (timeLeft < 0) {
+                elQuickMiniTime.classList.remove('text-gray-500');
+                elQuickMiniTime.classList.add('text-red-500');
+                elQuickMiniStatus.classList.add('aggressive-overtime');
+                elQuickTimerContainer.classList.add('aggressive-overtime'); // DODANA PULSACJA TIMERA
+            } else {
+                elQuickMiniTime.classList.add('text-gray-500');
+                elQuickMiniTime.classList.remove('text-red-500');
+                elQuickMiniStatus.classList.remove('aggressive-overtime');
+                elQuickTimerContainer.classList.remove('aggressive-overtime');
+            }
+        }
+
+        function updateTotalTimes() {
+            elTotalTime.innerText = formatTime(totalTimeElapsed);
+            let futureSum = 0;
+            for (let i = currentIndex + 1; i < workoutQueue.length; i++) {
+                futureSum += workoutQueue[i].duration;
+            }
+            let currentRemaining = timeLeft > 0 ? timeLeft : 0;
+            elRemainingTime.innerText = formatTime(currentRemaining + futureSum);
+
+            let status = accumulatedStatus; 
+            const timeSpentInCurrent = totalTimeElapsed - startTimeOfCurrentExercise;
+            const originalDurationCurrent = initialWorkoutData[currentIndex].duration;
+            const currentOvertime = Math.max(0, timeSpentInCurrent - originalDurationCurrent);
+            const totalStatus = status + currentOvertime;
+
+            if (totalStatus === 0) {
+                elStatusTime.innerText = "00:00";
+                elStatusTime.className = "font-mono text-xl font-bold text-gray-500";
+            } else if (totalStatus > 0) {
+                elStatusTime.innerText = "-" + formatTime(Math.abs(totalStatus));
+                elStatusTime.className = "font-mono text-xl font-bold text-red-500 animate-pulse";
+            } else {
+                elStatusTime.innerText = "+" + formatTime(Math.abs(totalStatus));
+                elStatusTime.className = "font-mono text-xl font-bold text-green-500";
+            }
+        }
+
+        function nextExercise() {
+            const timeSpentInCurrent = totalTimeElapsed - startTimeOfCurrentExercise;
+            const originalDurationCurrent = initialWorkoutData[currentIndex].duration;
+            const diff = timeSpentInCurrent - originalDurationCurrent;
+            accumulatedStatus += diff;
+
+            if (timeLeft < 0) {
+                applyTimePenalty(Math.abs(timeLeft));
+            } else if (timeLeft > 0 && currentIndex < workoutQueue.length - 1) {
+                applyTimeBonus(timeLeft);
+            }
+            loadExercise(currentIndex + 1);
+        }
+
+        function applyTimePenalty(overtimeSeconds) {
+            let remainingPool = 0;
+            for (let i = currentIndex + 1; i < workoutQueue.length; i++) {
+                remainingPool += workoutQueue[i].duration;
+            }
+            if (remainingPool === 0) return;
+
+            let ratio = overtimeSeconds / remainingPool;
+            if (ratio > 1) ratio = 1;
+            
+            let totalDeducted = 0;
+            let changes = [];
+            for (let i = currentIndex + 1; i < workoutQueue.length; i++) {
+                const original = workoutQueue[i].duration;
+                const deduction = Math.floor(original * ratio);
+                let maxDeduction = original - 5;
+                let actualDeduction = Math.min(deduction, maxDeduction);
+                if (actualDeduction < 0) actualDeduction = 0;
+                changes.push({ index: i, amount: actualDeduction, original: original });
+                totalDeducted += actualDeduction;
+            }
+            if (ratio < 1) {
+                let remainder = overtimeSeconds - totalDeducted;
+                let i = 0;
+                while (remainder > 0 && i < changes.length) {
+                    let ch = changes[i];
+                    if (ch.original - (ch.amount + 1) >= 5) {
+                        ch.amount += 1;
+                        totalDeducted += 1;
+                        remainder -= 1;
+                    }
+                    i++;
+                    if (i >= changes.length && remainder > 0) i = 0;
+                    let canDeductMore = changes.some(c => c.original - c.amount > 5);
+                    if (!canDeductMore) break;
+                }
+            }
+            changes.forEach(ch => { workoutQueue[ch.index].duration -= ch.amount; });
+            showToast(`Przekroczenie! Odjęto łącznie ${formatTime(totalDeducted)}`, 'error');
+        }
+
+        function applyTimeBonus(savedSeconds) {
+            let remainingPool = 0;
+            for (let i = currentIndex + 1; i < workoutQueue.length; i++) {
+                remainingPool += workoutQueue[i].duration;
+            }
+            if (remainingPool === 0) return;
+
+            let ratio = savedSeconds / remainingPool;
+            let totalAdded = 0;
+            let changes = [];
+            for (let i = currentIndex + 1; i < workoutQueue.length; i++) {
+                const original = workoutQueue[i].duration;
+                const addition = Math.floor(original * ratio);
+                changes.push({ index: i, amount: addition });
+                totalAdded += addition;
+            }
+            let remainder = savedSeconds - totalAdded;
+            let i = 0;
+            while (remainder > 0 && i < changes.length) {
+                changes[i].amount += 1;
+                totalAdded += 1;
+                remainder -= 1;
+                i++;
+                if (i >= changes.length) i = 0;
+            }
+            changes.forEach(ch => { workoutQueue[ch.index].duration += ch.amount; });
+            showToast(`Zaoszczędzono! Dodano łącznie ${formatTime(totalAdded)}`, 'success');
+        }
+
+        function renderQueue() {
+            elQueue.innerHTML = '';
+            
+            // Widok Komentarza
+            if (activeCommentIndex !== null) {
+                const ex = workoutQueue[activeCommentIndex];
+                const div = document.createElement('div');
+                div.className = "h-full flex flex-col items-center justify-center p-6 text-center cursor-pointer bg-gray-800 rounded-xl border-2 border-blue-500 shadow-xl overflow-hidden";
+                div.onclick = () => { activeCommentIndex = null; renderQueue(); };
+                
+                div.innerHTML = `
+                    <div class="mb-4">
+                        <span class="text-xs text-blue-400 uppercase tracking-widest font-bold">Szczegóły ćwiczenia</span>
+                        <h3 class="text-2xl font-bold text-white mt-1">${ex.name}</h3>
+                    </div>
+                    <div class="flex-1 overflow-y-auto w-full pr-2 custom-scrollbar">
+                        <p class="text-gray-200 text-lg leading-relaxed whitespace-pre-wrap">${ex.comment || "Brak dodatkowego opisu."}</p>
+                    </div>
+                    <div class="mt-4 pt-4 border-t border-gray-700 w-full">
+                        <span class="text-xs text-gray-500 uppercase tracking-widest"><i class="fas fa-times mr-1"></i> Dotknij aby zamknąć</span>
+                    </div>
+                `;
+                elQueue.appendChild(div);
+                return;
+            }
+
+            // Normalna lista
+            workoutQueue.forEach((ex, idx) => {
+                if (idx === currentIndex) return;
+
+                const isPast = idx < currentIndex;
+                const div = document.createElement('div');
+                
+                if (isPast) {
+                    div.className = "flex justify-between items-center bg-gray-800/40 p-2 rounded border-l-4 border-gray-700 text-gray-600 mb-1 select-none";
+                } else {
+                    div.className = "flex justify-between items-center bg-gray-700 p-3 rounded-lg border-l-4 border-blue-500 mb-2 transition active:scale-95";
+                    
+                    // Logika kliknięcia w komentarz
+                    if (ex.comment) {
+                        div.style.cursor = "pointer";
+                        div.onclick = () => { activeCommentIndex = idx; renderQueue(); };
+                    }
+                }
+
+                const globalIdx = idx;
+                const originalEx = initialWorkoutData[globalIdx];
+                let timeDiffHtml = '';
+                
+                if (originalEx && !isPast) {
+                    if (ex.duration < originalEx.duration) {
+                        timeDiffHtml = `<span class="text-red-400 text-xs line-through mr-2 opacity-80">${formatTime(originalEx.duration)}</span>`;
+                    } else if (ex.duration > originalEx.duration) {
+                        timeDiffHtml = `<span class="text-green-400 text-xs line-through mr-2 opacity-80">${formatTime(originalEx.duration)}</span>`;
+                    }
+                }
+
+                // Ikona info jeśli jest komentarz
+                const infoIcon = (ex.comment && !isPast) ? '<i class="fas fa-info-circle text-blue-400 text-xs ml-2"></i>' : '';
+
+                div.innerHTML = `
+                    <div class="flex flex-col">
+                        <span class="font-medium ${isPast ? 'text-xs line-through' : 'text-gray-200'} flex items-center">
+                            ${ex.name} ${infoIcon}
+                        </span>
+                        ${ex.comment && !isPast ? `<span class="text-[10px] text-gray-400 italic truncate max-w-[200px]">${ex.comment}</span>` : ''}
+                    </div>
+                    <div class="flex items-center">
+                        ${timeDiffHtml}
+                        <span class="font-mono font-bold ${isPast ? 'text-xs' : 'text-white'}">${formatTime(ex.duration)}</span>
+                    </div>
+                `;
+                
+                if (idx === currentIndex + 1) {
+                    div.id = "next-up-item";
+                }
+
+                elQueue.appendChild(div);
+            });
+
+            setTimeout(() => {
+                const nextItem = document.getElementById('next-up-item');
+                if (nextItem) {
+                    const containerTop = elQueue.getBoundingClientRect().top;
+                    const itemTop = nextItem.getBoundingClientRect().top;
+                    const relativeTop = itemTop - containerTop + elQueue.scrollTop;
+                    
+                    elQueue.scrollTo({
+                        top: relativeTop - 10, 
+                        behavior: 'smooth'
+                    });
+                } else if (currentIndex >= workoutQueue.length) {
+                    elQueue.scrollTop = elQueue.scrollHeight;
+                }
+            }, 50);
+        }
+
+        function finishWorkout() {
+            clearInterval(timerInterval);
+            releaseWakeLock();
+            screens.workout.classList.add('hidden');
+            screens.summary.classList.remove('hidden');
+            elFinalTime.innerText = formatTime(totalTimeElapsed);
+            if (accumulatedStatus === 0) {
+                elFinalStatus.innerText = "Idealnie w czasie (00:00)";
+                elFinalStatus.className = "text-xl font-mono text-gray-400";
+            } else if (accumulatedStatus > 0) {
+                elFinalStatus.innerText = "-" + formatTime(Math.abs(accumulatedStatus)) + " (Spóźnienie)";
+                elFinalStatus.className = "text-xl font-mono text-red-500";
+            } else {
+                elFinalStatus.innerText = "+" + formatTime(Math.abs(accumulatedStatus)) + " (Przed czasem)";
+                elFinalStatus.className = "text-xl font-mono text-green-500";
+            }
+        }
+
+        function openQuickTimer(source) {
+            previousScreen = source;
+            if (source === 'setup') screens.setup.classList.add('hidden');
+            if (source === 'workout') screens.workout.classList.add('hidden');
+            screens.quick.classList.remove('hidden');
+            
+            requestWakeLock();
+            quickRounds = 0;
+            setQuickTime(30); 
+            document.getElementById('quick-rounds').innerText = '0';
+            updateQuickMiniPreview(); 
+        }
+
+        function closeQuickTimer() {
+            clearInterval(quickInterval);
+            quickIsRunning = false;
+            screens.quick.classList.add('hidden');
+            if (previousScreen === 'setup') {
+                releaseWakeLock();
+                screens.setup.classList.remove('hidden');
+            } else if (previousScreen === 'workout') {
+                screens.workout.classList.remove('hidden');
+            }
+        }
+
+        function toggleMute() {
+            isMuted = !isMuted;
+            const btn = document.getElementById('mute-btn');
+            if (isMuted) {
+                btn.innerHTML = '<i class="fas fa-bell-slash text-red-400"></i>';
+                btn.classList.add('bg-gray-800', 'border', 'border-gray-600');
+                btn.classList.remove('bg-gray-700');
+            } else {
+                btn.innerHTML = '<i class="fas fa-bell text-gray-400"></i>';
+                btn.classList.remove('bg-gray-800', 'border', 'border-gray-600');
+                btn.classList.add('bg-gray-700');
+            }
+        }
+
+        function triggerVisualAlarm() {
+            const screen = document.getElementById('quick-timer-screen');
+            screen.classList.add('visual-alarm-active');
+            setTimeout(() => {
+                screen.classList.remove('visual-alarm-active');
+            }, 600);
+        }
+
+        function setQuickTime(seconds) {
+            clearInterval(quickInterval);
+            quickIsRunning = false;
+            document.getElementById('quick-start-btn').innerHTML = '<i class="fas fa-play mr-2"></i> START';
+            quickPreset = seconds;
+            quickTimeLeft = seconds;
+            updateQuickUI();
+        }
+
+        function toggleQuickTimer() {
+            const btn = document.getElementById('quick-start-btn');
+            if (!window.audioCtx) window.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+            if (quickIsRunning) {
+                clearInterval(quickInterval);
+                quickIsRunning = false;
+                btn.innerHTML = '<i class="fas fa-play mr-2"></i> WZNÓW';
+            } else {
+                quickIsRunning = true;
+                btn.innerHTML = '<i class="fas fa-pause mr-2"></i> PAUZA';
+                if (quickTimeLeft <= 0) quickTimeLeft = quickPreset;
+
+                quickInterval = setInterval(() => {
+                    quickTimeLeft--;
+                    updateQuickUI();
+                    if (quickTimeLeft <= 0) {
+                        if (!isMuted) {
+                            playEndSignal();
+                        }
+                        triggerVisualAlarm(); 
+
+                        quickRounds++;
+                        document.getElementById('quick-rounds').innerText = quickRounds;
+                        clearInterval(quickInterval);
+                        quickIsRunning = false;
+                        quickTimeLeft = quickPreset;
+                        updateQuickUI();
+                        btn.innerHTML = '<i class="fas fa-play mr-2"></i> START (KOLEJNA)';
+                    }
+                }, 1000);
+            }
+        }
+
+        function updateQuickUI() {
+            const display = document.getElementById('quick-timer-display');
+            const ring = document.getElementById('quick-progress-ring');
+            display.innerText = formatTime(quickTimeLeft);
+            const offset = circumference - (quickTimeLeft / quickPreset) * circumference;
+            ring.style.strokeDashoffset = offset;
+        }
+
+        function playEndSignal() {
+            const ctx = window.audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+            const now = ctx.currentTime;
+            
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            
+            osc.type = 'sawtooth'; 
+            osc.frequency.setValueAtTime(1000, now);
+            gain.gain.setValueAtTime(0.5, now);
+            
+            osc.start(now);
+            osc.stop(now + 0.8);
+        }
+
+        function formatTime(seconds) {
+            const m = Math.floor(seconds / 60);
+            const s = seconds % 60;
+            return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+        }
+
+        function showToast(msg, type = 'error') {
+            elPenaltyToast.innerText = msg;
+            elPenaltyToast.classList.remove('bg-red-600', 'bg-green-600');
+            if (type === 'success') elPenaltyToast.classList.add('bg-green-600');
+            else elPenaltyToast.classList.add('bg-red-600');
+            elPenaltyToast.style.opacity = '1';
+            setTimeout(() => { elPenaltyToast.style.opacity = '0'; }, 3000);
+        }
+    </script>
+</body>
+</html>
